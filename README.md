@@ -197,17 +197,7 @@ A **Practice Notes** feature that lets advisors record free-text notes about a p
 - **Validation: reject empty/whitespace-only notes** — Added server-side validation on the POST endpoint, plus the client disables the Save button when the textarea is empty. Defense in depth.
 - **Trim `noteText` before saving** — Prevents leading/trailing whitespace from corrupting the stored value.
 
-### 3. What would you improve with more time?
-
-- **Authentication** — `authMiddleware` is defined but never applied to any data endpoint. Every practice's financial data is publicly accessible. This is the single biggest thing I'd fix.
-- **Pull `createdBy` from auth context** — Once auth is wired up, the field should come from the session/JWT rather than a manual input.
-- **Edit and delete** — Currently notes are append-only. Advisors might need to correct typos or remove stale notes.
-- **Pagination** — For practices with hundreds of notes, loading everything at once becomes slow.
-- **Zod validation with `insertPracticeNoteSchema`** — I added basic validation, but using the drizzle-zod schema would catch more edge cases consistently.
-- **Optimistic UI** — Show the new note in the list immediately on submit instead of waiting for the refetch.
-- **Tests** — No test suite exists in the project. At minimum, integration tests for the two new endpoints would be valuable.
-
-### 4. Did you notice anything in the existing code you'd want to fix?
+### 3. Did you notice anything in the existing code you'd want to fix?
 
 Yes — I fixed several of these as bonus work:
 
@@ -223,11 +213,6 @@ Yes — I fixed several of these as bonus work:
 
 5. **No validation on new POST endpoint** — Added a check for empty/whitespace-only `noteText` with a 400 response.
 
-**Noted but not fixed (bigger scope, would need coordination):**
+**TODO:**
 
-- `server/integrations/auth.ts` has the password check **commented out** — any email + any password logs in. This is presumably a dev shortcut but should not ship.
-- `JWT_SECRET` falls back to a hardcoded string if the env var is missing.
-- Passwords use a custom `simpleHash()` instead of bcrypt.
-- OAuth tokens for QuickBooks, Google Ads, and Facebook are stored in in-memory objects — lost on every server restart.
-- Pre-existing TypeScript errors in `server/integrations/*.ts` where `req.query` values (typed as `string | string[]`) are used directly as `string`. The app compiles via `esbuild` so these don't block builds, but `npx tsc` flags 11 errors.
 - No error states on most pages — only `isLoading` is handled, not `isError`.
