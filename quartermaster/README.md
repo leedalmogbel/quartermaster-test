@@ -2,7 +2,8 @@
 
 Test task submission by **Leed Almogbel** — adds a **Practice Notes** feature to the Quartermaster CFO platform, plus several bonus fixes to existing code.
 
-See [`WRITEUP.md`](./WRITEUP.md) for a full description of decisions, trade-offs, and improvements.
+**Jump to:**
+[Setup](#setup) · [How to Test](#how-to-test-the-practice-notes-feature) · [Write-up](#write-up)
 
 ---
 
@@ -156,3 +157,77 @@ Creates a new note. Server sets `createdAt`.
 ```
 
 **Response:** the created `PracticeNote` object.
+
+---
+
+## Write-up
+
+### 1. What did you build?
+
+A **Practice Notes** feature that lets advisors record free-text notes about a practice (e.g. "Dr. Chen prefers email contact. Renewal due June 2026.").
+
+**Task A — Database Schema**
+- Added a `practice_notes` table to `shared/schema.ts` with fields: `id`, `practice_id`, `note_text`, `created_by`, `created_at`
+- Added a `CREATE TABLE IF NOT EXISTS` bootstrap in `server/storage.ts` so the table is created on first run
+- Exported `insertPracticeNoteSchema`, `PracticeNote`, and `InsertPracticeNote` types
+
+**Task B — Backend API**
+- Added `getPracticeNotes(practiceId)` — returns notes newest first via `orderBy(desc(createdAt))`
+- Added `createPracticeNote(data)` — synchronous Drizzle, `.returning().get()`
+- Added `GET /api/practices/:id/notes` and `POST /api/practices/:id/notes` endpoints
+- Server sets the `createdAt` timestamp (not the client) for data integrity
+
+**Task C — Frontend Page**
+- Created `client/src/pages/practice-notes.tsx`
+- Textarea for the note, optional name/email input, Save Note button
+- Notes list showing text (with line-break preservation), creator, and a formatted timestamp
+- Uses `apiRequest` for all HTTP calls, TanStack Query v5 object syntax, `useMutation` with cache invalidation and toast feedback
+- Loading skeletons, empty state, disabled-button state while saving
+
+**Task D — Wiring**
+- Added the `/notes` route in `App.tsx`
+- Added "Practice Notes" to the sidebar with the `StickyNote` icon from lucide-react
+
+### 2. What decisions did you make and why?
+
+- **Server-side `createdAt`** — I set the ISO timestamp in the route handler rather than trusting the client clock. Client clocks drift, can be spoofed, and may be in the wrong timezone. The server is the single source of truth.
+- **No pagination** — Matches the existing pattern (`action-items.tsx` loads all items at once). Adding pagination would have been inconsistent with the rest of the app; I noted it as a future improvement instead.
+- **`createdBy` as free-text input** — The task spec describes it as "advisor name or email". Pulling from an auth context would have been cleaner, but the app's auth middleware isn't actually applied to any data endpoints yet, so there's no authenticated user to pull from. I went with the spec.
+- **queryKey structure `["/api/practices", practiceId, "notes"]`** — Matches the pattern used elsewhere in the codebase and works with the default `queryFn` in `queryClient.ts`, which joins the key parts into a URL. It also scopes the cache by `practiceId` so switching practices in the sidebar correctly refetches.
+- **Validation: reject empty/whitespace-only notes** — Added server-side validation on the POST endpoint, plus the client disables the Save button when the textarea is empty. Defense in depth.
+- **Trim `noteText` before saving** — Prevents leading/trailing whitespace from corrupting the stored value.
+
+### 3. What would you improve with more time?
+
+- **Authentication** — `authMiddleware` is defined but never applied to any data endpoint. Every practice's financial data is publicly accessible. This is the single biggest thing I'd fix.
+- **Pull `createdBy` from auth context** — Once auth is wired up, the field should come from the session/JWT rather than a manual input.
+- **Edit and delete** — Currently notes are append-only. Advisors might need to correct typos or remove stale notes.
+- **Pagination** — For practices with hundreds of notes, loading everything at once becomes slow.
+- **Zod validation with `insertPracticeNoteSchema`** — I added basic validation, but using the drizzle-zod schema would catch more edge cases consistently.
+- **Optimistic UI** — Show the new note in the list immediately on submit instead of waiting for the refetch.
+- **Tests** — No test suite exists in the project. At minimum, integration tests for the two new endpoints would be valuable.
+
+### 4. Did you notice anything in the existing code you'd want to fix?
+
+Yes — I fixed several of these as bonus work:
+
+**Fixed in this submission:**
+
+1. **Sidebar navigation was broken for all pages** — The `<Router hook={useHashLocation}>` in `App.tsx` only wrapped the `<Switch>` inside `<main>`. The sidebar's `<Link>` components were outside that Router context, so clicking any nav item navigated the browser path (`/notes`) instead of the hash (`#/notes`) — meaning routes never matched. Moved the Router up to wrap both the sidebar and the routes. This fixes navigation for **every** page, not just Practice Notes.
+
+2. **Raw `fetch()` inconsistency** — The instructions said to always use `apiRequest`, but five existing pages (`dashboard.tsx`, `action-items.tsx`, `perfect-pnl.tsx`, `forecasting.tsx`, `cfo-script.tsx`) used raw `fetch()` inside their `queryFn`. This skips the centralized error handling in `throwIfResNotOk()`. Replaced all of them.
+
+3. **PATCH `/api/actions/:id` accepted any string as status** — The body was passed through without validation and cast with `as any` in storage. Added an enum check for `open`, `in_progress`, `completed`.
+
+4. **`parseInt(req.params.id)` returned NaN silently** — Every data endpoint called `parseInt` without checking the result. Passing `/api/practices/abc/reports` would silently return empty data. Added a `parseId()` helper that returns `null` for invalid input and made every endpoint return 400 with a clear error.
+
+5. **No validation on new POST endpoint** — Added a check for empty/whitespace-only `noteText` with a 400 response.
+
+**Noted but not fixed (bigger scope, would need coordination):**
+
+- `server/integrations/auth.ts` has the password check **commented out** — any email + any password logs in. This is presumably a dev shortcut but should not ship.
+- `JWT_SECRET` falls back to a hardcoded string if the env var is missing.
+- Passwords use a custom `simpleHash()` instead of bcrypt.
+- OAuth tokens for QuickBooks, Google Ads, and Facebook are stored in in-memory objects — lost on every server restart.
+- Pre-existing TypeScript errors in `server/integrations/*.ts` where `req.query` values (typed as `string | string[]`) are used directly as `string`. The app compiles via `esbuild` so these don't block builds, but `npx tsc` flags 11 errors.
+- No error states on most pages — only `isLoading` is handled, not `isError`.
